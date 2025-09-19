@@ -34,6 +34,8 @@
 
 ## 📦 安装
 
+最新版本1.0.3
+
 ```bash
 pip install fastbackup
 ```

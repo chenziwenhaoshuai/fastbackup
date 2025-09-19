@@ -17,11 +17,16 @@ import atexit
 
 
 class FastBackup:
-    def __init__(self):
-        # 自动检测调用脚本的目录作为项目根目录
-        caller_frame = inspect.currentframe().f_back
-        caller_file = caller_frame.f_globals['__file__']
-        self.project_path = Path(caller_file).parent.resolve()
+    def __init__(self, project_path=None):
+        # 修复：使用更可靠的方法获取项目路径
+        if project_path:
+            self.project_path = Path(project_path).resolve()
+        else:
+            self.project_path = self._find_user_script_path()
+        
+        if not self.project_path:
+            print("⚠️  FastBackup: 无法确定项目路径，跳过备份")
+            return
 
         # 备份目录设置为项目根目录下的 .fastbackup
         self.backup_root = self.project_path / '.fastbackup'
@@ -36,6 +41,71 @@ class FastBackup:
 
         # 注册退出时的清理函数
         atexit.register(self._on_exit)
+
+    def _find_user_script_path(self):
+        """找到真正的用户脚本路径"""
+        try:
+            # 方法1: 使用 sys.argv[0] (最可靠的主脚本路径)
+            if len(sys.argv) > 0 and sys.argv[0]:
+                main_script_path = sys.argv[0]
+                
+                # 处理相对路径
+                if not os.path.isabs(main_script_path):
+                    main_script_path = os.path.join(os.getcwd(), main_script_path)
+                
+                main_script_path = Path(main_script_path).resolve()
+                
+                # 检查是否是有效的Python文件
+                if main_script_path.exists():
+                    if main_script_path.is_file() and main_script_path.suffix in ['.py', '.pyw']:
+                        print(f"🎯 FastBackup: 检测到主脚本: {main_script_path}")
+                        return main_script_path.parent
+                    elif main_script_path.is_dir():
+                        # 如果是目录（比如在Jupyter中运行），使用该目录
+                        print(f"🎯 FastBackup: 检测到项目目录: {main_script_path}")
+                        return main_script_path
+            
+            # 方法2: 检查调用栈中的用户文件
+            current_frame = inspect.currentframe()
+            frame = current_frame
+            user_files = []
+            
+            while frame:
+                frame_file = frame.f_globals.get('__file__')
+                if frame_file:
+                    frame_path = Path(frame_file).resolve()
+                    path_str = str(frame_path)
+                    
+                    # 排除系统文件和包文件
+                    if (not any(exclude in path_str for exclude in [
+                        'site-packages', 'lib/python', 'importlib', 
+                        'runpy.py', '<frozen', 'pkgutil.py'
+                    ]) and frame_path.suffix == '.py' and frame_path.exists()):
+                        user_files.append(frame_path)
+                
+                frame = frame.f_back
+            
+            # 找到最合适的用户文件
+            if user_files:
+                # 优先选择不在Python安装目录中的文件
+                for user_file in user_files:
+                    if not str(user_file).startswith(sys.prefix):
+                        print(f"🎯 FastBackup: 从调用栈检测到用户脚本: {user_file}")
+                        return user_file.parent
+                
+                # 如果都在Python目录中，选择第一个
+                print(f"🎯 FastBackup: 使用调用栈中的脚本: {user_files[0]}")
+                return user_files[0].parent
+            
+            # 方法3: 使用当前工作目录
+            cwd = Path.cwd()
+            print(f"🎯 FastBackup: 使用当前工作目录: {cwd}")
+            return cwd
+                
+        except Exception as e:
+            print(f"⚠️  FastBackup: 检测项目路径时出错: {e}")
+            # 最后的备选方案：当前工作目录
+            return Path.cwd()
 
     def _update_gitignore(self, gitignore_path):
         """更新.gitignore文件，忽略备份目录"""
@@ -66,6 +136,24 @@ class FastBackup:
 
             for file in files:
                 if file.endswith('.py'):
+                    file_path = Path(root) / file
+                    python_files.append(file_path)
+                elif file.endswith('.ipynb'):
+                    file_path = Path(root) / file
+                    python_files.append(file_path)
+                elif file.endswith('.txt') or file.endswith('.md'):
+                    file_path = Path(root) / file
+                    python_files.append(file_path)
+                elif file.endswith('.sh'):
+                    file_path = Path(root) / file
+                    python_files.append(file_path)
+                elif file.endswith('.yaml') or file.endswith('.yml'):
+                    file_path = Path(root) / file
+                    python_files.append(file_path)
+                elif file.endswith('.json'):
+                    file_path = Path(root) / file
+                    python_files.append(file_path)
+                elif file.endswith('.cfg') or file.endswith('.ini'):
                     file_path = Path(root) / file
                     python_files.append(file_path)
 
@@ -140,6 +228,7 @@ class FastBackup:
             return None
 
         print(f"💾 FastBackup: 创建备份 {backup_name} ({len(python_files)} 个文件)")
+        print(f"📁 项目路径: {self.project_path}")
 
         # 备份信息
         backup_info = {
@@ -190,10 +279,8 @@ class FastBackup:
     def list_backups(cls, project_path=None):
         """列出所有备份（类方法，可以独立调用）"""
         if project_path is None:
-            # 自动检测当前项目路径
-            caller_frame = inspect.currentframe().f_back
-            caller_file = caller_frame.f_globals['__file__']
-            project_path = Path(caller_file).parent.resolve()
+            # 使用当前工作目录
+            project_path = Path.cwd()
         else:
             project_path = Path(project_path).resolve()
 
@@ -249,9 +336,7 @@ class FastBackup:
     def restore_backup(cls, backup_name, project_path=None):
         """恢复指定的备份"""
         if project_path is None:
-            caller_frame = inspect.currentframe().f_back
-            caller_file = caller_frame.f_globals['__file__']
-            project_path = Path(caller_file).parent.resolve()
+            project_path = Path.cwd()
         else:
             project_path = Path(project_path).resolve()
 
@@ -362,8 +447,17 @@ def restore(backup_name):
     return FastBackup.restore_backup(backup_name)
 
 
-# 当模块被导入时自动执行备份
-_ensure_backup()
+# 自动初始化函数 - 只有在真正导入使用时才执行
+def init(project_path=None):
+    """手动初始化FastBackup"""
+    global _backup_instance
+    _backup_instance = FastBackup(project_path)
+    return _backup_instance
+
+
+# 在模块导入时执行初始化
+init()
+
 
 # 如果直接运行此文件，提供命令行功能
 if __name__ == "__main__":
@@ -387,6 +481,6 @@ if __name__ == "__main__":
         print("FastBackup - 一行导入式实验备份工具")
         print("使用方法:")
         print("  在你的Python脚本开头添加: import fastbackup")
-        print("  命令行查看备份: python fastbackup.py --list")
+        print("  命令行查看备份: python -m fastbackup --list")
         print("  为前一次的备份添加注释: python -m fastbackup --comment \"将学习率从0.001提高到了0.01\"")
-        print("  恢复备份: python fastbackup.py --restore backup_20240101_120000")
+        print("  恢复备份: python -m fastbackup --restore backup_20240101_120000")
