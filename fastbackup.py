@@ -146,6 +146,7 @@ class FastBackup:
             "timestamp": timestamp,
             "project_path": str(self.project_path),
             "file_count": len(python_files),
+            "comment": "",
             "file_hashes": {},
             "files": []
         }
@@ -210,7 +211,7 @@ class FastBackup:
             return
 
         print(f"📋 FastBackup 历史记录 ({len(backup_dirs)} 个备份):")
-        print("-" * 60)
+        print("-" * 100)
 
         for i, backup_dir in enumerate(backup_dirs[:10]):  # 只显示最近10个
             info_file = backup_dir / "backup_info.json"
@@ -230,7 +231,11 @@ class FastBackup:
                     except:
                         time_str = timestamp
 
-                    print(f"{i + 1:2d}. {time_str} | {file_count} 文件 | {backup_dir.name}")
+                    backup_comment = info.get('comment', "")
+                    if len(backup_comment) > 20:
+                        backup_comment = backup_comment[:20] + '...'
+
+                    print(f"{i + 1:2d}. {time_str} | {file_count} 文件 | {backup_dir.name} | {backup_comment}")
 
                 except Exception:
                     print(f"{i + 1:2d}. {backup_dir.name} (信息读取失败)")
@@ -284,6 +289,46 @@ class FastBackup:
         else:
             print("❌ 找不到备份信息文件")
             return False
+    
+    @classmethod
+    def change_comment(cls, comment, project_path=None):
+        if project_path is None:
+            # 自动检测当前项目路径
+            caller_frame = inspect.currentframe().f_back
+            caller_file = caller_frame.f_globals['__file__']
+            project_path = Path(caller_file).parent.resolve()
+        else:
+            project_path = Path(project_path).resolve()
+
+        backup_root = project_path / '.fastbackup'
+
+        if not backup_root.exists():
+            print("📁 没有找到备份目录")
+            return
+
+        backup_dirs = sorted([d for d in backup_root.iterdir() if d.is_dir()],
+                             key=lambda x: x.name, reverse=True)
+
+        latest_info = backup_dirs[0] / "backup_info.json"
+
+        if latest_info.exists():
+            try:
+                with open(latest_info, 'r', encoding='utf-8') as f:
+                    info = json.load(f)
+
+                timestamp = info.get('timestamp', '')
+                file_count = info.get('file_count', 0)
+
+                info['comment'] = comment # 兼容旧json
+
+                with open(latest_info, 'w', encoding='utf-8') as f:
+                    json.dump(info, f, indent=2, ensure_ascii=False)
+
+            except Exception:
+                print(f"注释设置失败")
+        else:
+            print(f"无信息文件")
+
 
 
 # 全局变量，避免重复初始化
@@ -303,6 +348,9 @@ def backup():
     """手动触发备份"""
     return _ensure_backup()
 
+def comment(comment: str):
+    """为最新的备份修改注释"""
+    FastBackup.change_comment(comment)
 
 def list_backups():
     """列出所有备份"""
@@ -324,6 +372,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='FastBackup - 快速实验备份工具')
     parser.add_argument('--list', '-l', action='store_true', help='列出所有备份')
     parser.add_argument('--restore', '-r', help='恢复指定备份')
+    parser.add_argument('--comment', '-c', help='修改最新一次备份的注释')
     parser.add_argument('--project', '-p', help='项目路径（默认当前目录）')
 
     args = parser.parse_args()
@@ -332,9 +381,12 @@ if __name__ == "__main__":
         FastBackup.list_backups(args.project or os.getcwd())
     elif args.restore:
         FastBackup.restore_backup(args.restore, args.project or os.getcwd())
+    elif args.comment:
+        FastBackup.change_comment(args.comment, args.project or os.getcwd())
     else:
         print("FastBackup - 一行导入式实验备份工具")
         print("使用方法:")
         print("  在你的Python脚本开头添加: import fastbackup")
         print("  命令行查看备份: python fastbackup.py --list")
+        print("  为前一次的备份添加注释: python fastbackup.py --comment \"将学习率从0.001提高到了0.01\"")
         print("  恢复备份: python fastbackup.py --restore backup_20240101_120000")
