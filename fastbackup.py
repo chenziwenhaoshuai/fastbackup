@@ -388,5 +388,5 @@ if __name__ == "__main__":
         print("使用方法:")
         print("  在你的Python脚本开头添加: import fastbackup")
         print("  命令行查看备份: python fastbackup.py --list")
-        print("  为前一次的备份添加注释: python fastbackup.py --comment \"将学习率从0.001提高到了0.01\"")
+        print("  为前一次的备份添加注释: python -m fastbackup --comment \"将学习率从0.001提高到了0.01\"")
         print("  恢复备份: python fastbackup.py --restore backup_20240101_120000")
